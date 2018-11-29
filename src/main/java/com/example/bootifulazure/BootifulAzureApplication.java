@@ -18,22 +18,16 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.io.Resource;
 import org.springframework.data.annotation.Id;
-import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.config.annotation.method.configuration.EnableGlobalMethodSecurity;
-import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserRequest;
-import org.springframework.security.oauth2.client.userinfo.OAuth2UserService;
-import org.springframework.security.oauth2.core.oidc.user.OidcUser;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Component;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.InputStream;
 import java.net.URISyntaxException;
-import java.security.Principal;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Stream;
@@ -46,74 +40,38 @@ public class BootifulAzureApplication {
 	}
 }
 
-@RestController
-class GreetingsRestController {
-
-	@PreAuthorize("hasRole('users')")
-	@GetMapping("/greetings")
-	String greet(@AuthenticationPrincipal Principal principal) {
-		return "hello " + principal.getName() + "!";
-	}
-}
-
-@EnableGlobalMethodSecurity(prePostEnabled = true)
-@EnableWebSecurity
-class WebSecurity extends WebSecurityConfigurerAdapter {
-
-	private final OAuth2UserService<OidcUserRequest, OidcUser> auth2UserService;
-
-	WebSecurity(OAuth2UserService<OidcUserRequest, OidcUser> auth2UserService) {
-		this.auth2UserService = auth2UserService;
-	}
-
-	@Override
-	protected void configure(HttpSecurity http) throws Exception {
-
-		http
-			.authorizeRequests().anyRequest().authenticated()
-			.and()
-			.oauth2Login()
-			.userInfoEndpoint().oidcUserService(this.auth2UserService);
-
-	}
-}
-
-@Log4j2
 @Component
+@Log4j2
 class ServiceBusDemo {
 
-	private final ITopicClient topicClient;
+	private final ITopicClient iTopicClient;
 	private final ISubscriptionClient iSubscriptionClient;
 
-	ServiceBusDemo(ITopicClient topicClient, ISubscriptionClient iSubscriptionClient) {
-		this.topicClient = topicClient;
+	ServiceBusDemo(ITopicClient iTopicClient, ISubscriptionClient iSubscriptionClient) {
+		this.iTopicClient = iTopicClient;
 		this.iSubscriptionClient = iSubscriptionClient;
 	}
 
 	@EventListener(ApplicationReadyEvent.class)
-	public void serviceBus() throws Exception {
+	public void demo() throws Exception {
 
 		this.iSubscriptionClient.registerMessageHandler(new IMessageHandler() {
 
 			@Override
 			public CompletableFuture<Void> onMessageAsync(IMessage message) {
-
-				log.info(String.format("new message having body '%s' and id '%s'",
-					new String(message.getBody()), message.getMessageId()));
-
+				log.info("received message " + new String(message.getBody()) + " with body ID " + message.getMessageId());
 				return CompletableFuture.completedFuture(null);
 			}
 
 			@Override
 			public void notifyException(Throwable exception, ExceptionPhase phase) {
-				log.error("eek!", exception);
+				log.error("eeks!", exception);
 			}
 		});
 
 		Thread.sleep(1000);
 
-		this.topicClient
-			.send(new Message("Hello @ " + Instant.now().toString()));
+		this.iTopicClient.send(new Message("Hello @ " + Instant.now().toString()));
 
 	}
 }
@@ -127,44 +85,63 @@ class ObjectStorageServiceDemo {
 	private final CloudBlobContainer files;
 
 	ObjectStorageServiceDemo(
-		CloudStorageAccount cloudStorageAccount,
-		@Value("classpath:/cat.jpg") Resource resource) throws URISyntaxException, StorageException {
-		this.cloudStorageAccount = cloudStorageAccount;
-		this.resource = resource;
+		CloudStorageAccount csa,
+		@Value("classpath:/cat.jpg") Resource cat) throws URISyntaxException, StorageException {
+		this.resource = cat;
+		this.cloudStorageAccount = csa;
 		this.files = this.cloudStorageAccount
 			.createCloudBlobClient()
 			.getContainerReference("files");
+
 	}
 
 	@EventListener(ApplicationReadyEvent.class)
-	public void objectStorageService() throws Exception {
+	public void demo() throws Exception {
 
-		CloudBlockBlob cbb = this.files.getBlockBlobReference("cat-" + UUID.randomUUID().toString() + ".jpg");
-		cbb.upload(this.resource.getInputStream(), this.resource.contentLength());
-		log.info("uploaded blockblob to " + cbb.getStorageUri());
+		CloudBlockBlob blockBlobReference = this.files.getBlockBlobReference("cat-" + UUID.randomUUID().toString() + ".jpg");
+		try (InputStream in = this.resource.getInputStream()) {
+			blockBlobReference.upload(in, this.resource.contentLength());
+			log.info("uploaded blockblob to " + blockBlobReference.getStorageUri());
+		}
+
+	}
+
+}
+
+
+@RestController
+class GreetingsRestController {
+
+	@GetMapping("/hi")
+	String hello() {
+		return "Hello " + Instant.now().toString();
 	}
 }
 
-@Component
 @Log4j2
+@Component
 class CosmosDbDemo {
 
-	private final ReservationRepository reservationRepository;
+	private final ReservationRepository rr;
 
-	CosmosDbDemo(ReservationRepository reservationRepository) {
-		this.reservationRepository = reservationRepository;
+	CosmosDbDemo(ReservationRepository rr) {
+		this.rr = rr;
 	}
 
 	@EventListener(ApplicationReadyEvent.class)
-	public void cosmosDb() throws Exception {
+	public void demo() throws Exception {
 
-		this.reservationRepository.deleteAll();
+		this.rr.deleteAll();
 
 		Stream.of("A", "B", "C")
 			.map(name -> new Reservation(null, name))
-			.map(this.reservationRepository::save)
+			.map(this.rr::save)
 			.forEach(log::info);
+
 	}
+}
+
+interface ReservationRepository extends DocumentDbRepository<Reservation, String> {
 }
 
 @Data
@@ -172,12 +149,36 @@ class CosmosDbDemo {
 @NoArgsConstructor
 @Document(collection = "reservations")
 class Reservation {
-
 	@Id
 	private String id;
-	private String reservationName;
+	private String name;
 }
 
-interface ReservationRepository extends DocumentDbRepository<Reservation, String> {
+@Component
+@Log4j2
+class SqlServerDemo {
+
+	private final JdbcTemplate jdbcTemplate;
+
+	SqlServerDemo(JdbcTemplate jdbcTemplate) {
+		this.jdbcTemplate = jdbcTemplate;
+	}
+
+	@EventListener(ApplicationReadyEvent.class)
+	public void demo() throws Exception {
+		String query = "select TOP 5  * from SalesLT.Customer ";
+		RowMapper<Customer> rowMapper =
+			(rs, rowNum) -> new Customer(rs.getLong("customerid"), rs.getString("firstname"), rs.getString("lastname"));
+		List<Customer> customerList = this.jdbcTemplate.query(query, rowMapper);
+		customerList.forEach(log::info);
+	}
+
+	@Data
+	@AllArgsConstructor
+	@NoArgsConstructor
+	public static class Customer {
+		private Long id;
+		private String firstName, lastName;
+	}
 }
 
